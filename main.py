@@ -183,4 +183,51 @@ recoloured_img = recolour_img(preprocessed_img)
 recoloured_img.save("output1.png")
 
 
+def sobel_mapping(inputted_img: np.ndarray) -> np.ndarray:
+    # Sobel operator requires grayscale
+
+    # Blur to help reduce noise
+    img_blurred = cv2.GaussianBlur(inputted_img, (3, 3), 0)
+
+    # Compute Sobel operator for x and y
+    sobel_x = cv2.Sobel(img_blurred, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(img_blurred, cv2.CV_64F, 0, 1, ksize=3)
+
+    # Convert back to integers. Use L1 norm
+    sobel_x_abs = cv2.convertScaleAbs(sobel_x)
+    sobel_y_abs = cv2.convertScaleAbs(sobel_y)
+
+    # Combine the gradients
+    sobel_combined = cv2.addWeighted(
+        sobel_x_abs,
+        0.5, sobel_y_abs,
+        0.5,
+        0
+    )
+
+    return sobel_combined
+
+
+img_cv2_grayscale: np.ndarray = cv2.imread("makima1.png", cv2.IMREAD_GRAYSCALE)
+
+sobel_matrix = sobel_mapping(img_cv2_grayscale)
+threshold = 50
+
+edge_matrix = np.where(sobel_matrix > threshold, 1, 0)
+
+print(edge_matrix.shape)
+
+# Make the edges blue to pop out from the original image
+def edge_mapping(inputted_img: Image.Image, edge_matrix: np.ndarray):
+    pixels = np.array(inputted_img.convert("RGB"))
+
+    print(edge_matrix.shape, pixels.shape)
+    processed_array = np.where(edge_matrix[:,:,None] > 0, (0,0,0), pixels)
+    processed_img = Image.fromarray(processed_array.astype(np.uint8), "RGB")
+
+    return processed_img
+
+edge_img = edge_mapping(img, edge_matrix)
+edge_img.save("output_edge.png")
+
 
