@@ -1,4 +1,4 @@
-from PIL import Image, ImageTk, ImageEnhance, ImageFilter # img processing
+from PIL import Image, ImageTk, ImageEnhance, ImageFilter
 import numpy as np # better data handling and L2 norm calculation
 import cv2
 import tkinter as tk
@@ -165,7 +165,7 @@ def edge_mapping(inputted_img: Image.Image, sobel_matrix: np.ndarray, edge_stren
     sobel_norm = (sobel_matrix / 255.0)[:, :, None]
 
     # Scale the strength of edge based on sobel to determine how black to make the edge
-    soft_mask = np.clip((sobel_norm - (threshold / 255.0)) * 4.0, 0.0, 1.0) * edge_strength
+    soft_mask = np.clip((sobel_norm - (THRESHOLD / 255.0)) * 4.0, 0.0, 1.0) * edge_strength
     edge_colour = np.array([0, 0, 0], dtype=float)
     blended = pixels * (1 - soft_mask) + edge_colour * soft_mask
 
@@ -276,7 +276,7 @@ dithered_img = dither_bayer(compressed_img, strength=DITHER_STRENGTH, matrix=BAY
 final_img = recolour_img(dithered_img)
 
 
-final_img.save("bruh.png")
+final_img.save("output_final.png")
 
 end_time = time.perf_counter()
 
