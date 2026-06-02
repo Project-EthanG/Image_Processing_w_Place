@@ -1,29 +1,9 @@
-# Project goal: implement K-means clustering to compress an image into a certain
-# number of pixels to be plotted on wplace. There are three main components to this
-
-# 1) Colour designation: there are only a certain number of colours available in
-#    the wplace palette, so we need to convert colours to match whe colours
-
-# 2) Image compression: while theoretically possible, mapping every single pixel
-#    in a high definition image is extremely tedious on wplace, so we will need to
-#    be able to compress the photo to match a designated area (say 10k pixels)
-
-# 3) Image segmentation: standard compression will lump pixels together based on
-#    simple distances (like euclidean distance) but this is not good if we are
-#    trying to clump together pieces that are clearly part of a cluster (i.e;
-#    foreground vs. background) so we need to have segmentation incorporated
-#    prior to compression
-
-# Let's start with the simplest to implement; colour designation. This is simply
-# a matter of finding the closest colour (we can use L2 norm) and reassigning that
-# pixel first.
-
-# Colours are designated based on name, so let's store the hexa values in a dict
-
-from PIL import Image, ImageEnhance, ImageFilter # img processing
+from PIL import Image, ImageTk, ImageEnhance, ImageFilter
 import numpy as np # better data handling and L2 norm calculation
 import cv2
-from scipy.ndimage import sobel
+import tkinter as tk
+from skimage import color as skcolor
+import time
 
 
 # The palette (in RGB) for wplace is the following:
@@ -112,46 +92,37 @@ wplace_palette = {
     "Light Slate": (179, 185, 209),
 }
 
-# Find the closest colour for each pixel
-def closest_colour(current_colour):
-    # Starting from max, find the smallest distance from the actual colour of
-    # the pixel to each of the possible colours in the palette
-    current_min = float("inf")
-    approx_colour = None
 
-    for target_colour in wplace_palette.values():
-        target_colour_dist = np.linalg.norm(
-            np.array(target_colour) - np.array(current_colour)
-        )
-        if target_colour_dist < current_min:
-            current_min = target_colour_dist
-            approx_colour = target_colour
+def recolour_img(inputted_img: Image.Image, neutral_penalty: float = 12.0) -> Image.Image:
+    rgb_palette = np.array(list(wplace_palette.values()), dtype=np.float32) / 255.0
 
-    # Return the best approximation
-    return approx_colour
+    # Convert to lab for channel enhancement on dull colours
+    lab_palette = skcolor.rgb2lab(rgb_palette[None, :, :])[0]
+    palette_chroma = np.sqrt(lab_palette[:, 1] ** 2 + lab_palette[:, 2] ** 2)
 
+    # Penalise colours that are low chroma but not pure black/white
+    L = lab_palette[:, 0]
+    low_chroma_threshold = (palette_chroma < 15.0) & (L > 8.0) & (L < 95.0)
+    penalty = np.where(low_chroma_threshold, neutral_penalty, 0.0)
 
-def recolour_img(inputted_img: Image.Image) -> Image.Image:
+    # Convert image pixels to LAB
+    pixels = np.array(inputted_img.convert("RGB"), dtype=np.float32) / 255.0
+    h, w = pixels.shape[:2]
+    lab_pixels = skcolor.rgb2lab(pixels)
 
-    rgb_palette = np.array(list(wplace_palette.values()))
-    pixels = np.array(inputted_img.convert("RGB"))
-
-    # In order to vectorize correctly, store each pixel in its own row
-    flat = pixels.reshape(-1, 3).astype(float)
-
-    # Create a fake dimension for broadcasting. For broadcasting each dimension
-    # must have either the same size (idx=2), or one of the dimensions has a size
-    # of 1 (we can do this by adding None to idx=0 and idx=1).
-    dists = np.linalg.norm(flat[:, None, :] - rgb_palette[None, :, :], axis=2)
+    # Compute shortest distance when accounting for the penalty imposed for low chroma threshold
+    flat = lab_pixels.reshape(-1, 3)
+    dists = np.linalg.norm(flat[:, None, :] - lab_palette[None, :, :], axis=2)
+    dists = dists + penalty[None, :]
     closest_idx = np.argmin(dists, axis=1)
 
-    processed_array = rgb_palette[closest_idx].reshape(pixels.shape)
-    processed_img = Image.fromarray(processed_array.astype(np.uint8), "RGB")
+    # Map the closest colours
+    rgb_palette_uint8 = np.array(list(wplace_palette.values()), dtype=np.uint8)
+    processed_array = rgb_palette_uint8[closest_idx].reshape(h, w, 3)
 
-    return processed_img
+    return Image.fromarray(processed_array, "RGB")
 
 
-# Implement preprocessing for better saturation and deeper shadows
 def preprocess_img(
         inputted_img: Image.Image,
         saturation: float,
@@ -165,22 +136,6 @@ def preprocess_img(
     processed_img = ImageEnhance.Contrast(saturated_img).enhance(shadow_contrast)
 
     return processed_img
-
-# Open image file
-img: Image.Image = Image.open("makima1.png")
-
-# Preprocess image
-preprocessed_img = preprocess_img(
-    img,
-    saturation=1,
-    shadow_contrast=1
-)
-
-# Process image via recolouring scheme
-recoloured_img = recolour_img(preprocessed_img)
-
-# Save image to file
-recoloured_img.save("output1.png")
 
 
 def sobel_mapping(inputted_img: np.ndarray) -> np.ndarray:
@@ -198,36 +153,132 @@ def sobel_mapping(inputted_img: np.ndarray) -> np.ndarray:
     sobel_y_abs = cv2.convertScaleAbs(sobel_y)
 
     # Combine the gradients
-    sobel_combined = cv2.addWeighted(
-        sobel_x_abs,
-        0.5, sobel_y_abs,
-        0.5,
-        0
-    )
+    sobel_combined = cv2.addWeighted(sobel_x_abs,0.5, sobel_y_abs,0.5,0)
 
     return sobel_combined
 
 
-img_cv2_grayscale: np.ndarray = cv2.imread("makima1.png", cv2.IMREAD_GRAYSCALE)
+def edge_mapping(inputted_img: Image.Image, sobel_matrix: np.ndarray, edge_strength: float = 0.6):
+    pixels = np.array(inputted_img.convert("RGB")).astype(float)
 
-sobel_matrix = sobel_mapping(img_cv2_grayscale)
-threshold = 50
+    # Normalise sobel to [0, 1], broadcasted over RGB channels
+    sobel_norm = (sobel_matrix / 255.0)[:, :, None]
 
-edge_matrix = np.where(sobel_matrix > threshold, 1, 0)
+    # Scale the strength of edge based on sobel to determine how black to make the edge
+    soft_mask = np.clip((sobel_norm - (THRESHOLD / 255.0)) * 4.0, 0.0, 1.0) * edge_strength
+    edge_colour = np.array([0, 0, 0], dtype=float)
+    blended = pixels * (1 - soft_mask) + edge_colour * soft_mask
 
-print(edge_matrix.shape)
-
-# Make the edges blue to pop out from the original image
-def edge_mapping(inputted_img: Image.Image, edge_matrix: np.ndarray):
-    pixels = np.array(inputted_img.convert("RGB"))
-
-    print(edge_matrix.shape, pixels.shape)
-    processed_array = np.where(edge_matrix[:,:,None] > 0, (0,0,0), pixels)
-    processed_img = Image.fromarray(processed_array.astype(np.uint8), "RGB")
-
+    # Convert back to RGB
+    processed_img = Image.fromarray(np.clip(blended, 0, 255).astype(np.uint8), "RGB")
     return processed_img
 
-edge_img = edge_mapping(img, edge_matrix)
-edge_img.save("output_edge.png")
 
+def compress_img(
+        inputted_img: Image.Image,
+        target_pixels: int,
+        sobel_matrix: np.ndarray,
+        flat_preserve: float = 0.8
+    ) -> Image.Image:
+
+    w, h = inputted_img.size
+
+    # In case image is way too small
+    block_size = max(1, int(np.sqrt((w * h) / target_pixels)))
+    pixels = np.array(inputted_img.convert("RGB")).astype(float)
+    new_h = h // block_size
+    new_w = w // block_size
+
+    # Duplicate pixel and sobel matrices but with their smaller size
+    pixels_cropped = pixels[:new_h * block_size, :new_w * block_size]
+    sobel_cropped  = sobel_matrix[:new_h * block_size, :new_w * block_size].astype(float)
+
+    # Reshape and take the average for pixel and sobel blocks
+    blocks = pixels_cropped.reshape(new_h, block_size, new_w, block_size, 3)
+    block_mean = blocks.mean(axis=(1, 3))
+    sobel_blocks = sobel_cropped.reshape(new_h, block_size, new_w, block_size)
+    edge_strength = sobel_blocks.mean(axis=(1, 3)) / 255.0
+
+    # Extract centre pixel of each block
+    mid = block_size // 2
+    centre = pixels_cropped[mid::block_size, mid::block_size]
+    centre = centre[:new_h, :new_w]
+
+    # Broadcast the edge strength over the RGB channels
+    e = edge_strength[:, :, None]
+    output = e * block_mean + (1 - e) * (centre * flat_preserve + block_mean * (1 - flat_preserve))
+
+    compressed = Image.fromarray(output.astype(np.uint8), "RGB")
+    return compressed.resize((new_w * block_size, new_h * block_size), Image.NEAREST)
+
+
+def dither_bayer(
+        inputted_img: Image.Image,
+        strength: float = 30.0,
+        matrix: np.ndarray = None,
+        chroma_boost: float = 2.5,
+        chroma_threshold: float = 20.0
+    ) -> Image.Image:
+
+    pixels = np.array(inputted_img.convert("RGB")).astype(np.float32) / 255.0
+    h, w = pixels.shape[:2]
+    m = matrix.shape[0]
+
+    tiled = np.tile(matrix, (h // m + 1, w // m + 1))[:h, :w]
+
+    # Convert to lab to boost channels
+    lab = skcolor.rgb2lab(pixels)
+
+    # Use chroma magnitude to determine where boost is needed
+    chroma = np.sqrt(lab[:, :, 1] ** 2 + lab[:, :, 2] ** 2)
+    t = np.clip(1.0 - (chroma / chroma_threshold), 0.0, 1.0)
+    boost = 1.0 + (chroma_boost - 1.0) * t
+
+    # Apply dither. L takes base, while a/b take boosted to emphasize not throwing out lowly saturated colours
+    noise = tiled * strength
+    lab[:, :, 0] += noise
+    lab[:, :, 1] += noise * boost
+    lab[:, :, 2] += noise * boost
+
+    # Convert back to RGB
+    perturbed_rgb = skcolor.lab2rgb(np.clip(lab,[0, -128, -128],[100, 127, 127]))
+    perturbed_uint8 = np.clip(perturbed_rgb * 255, 0, 255).astype(np.uint8)
+
+    return Image.fromarray(perturbed_uint8, "RGB")
+
+
+start_time = time.perf_counter()
+
+# Open image file
+img: Image.Image = Image.open("makima1.png")
+
+THRESHOLD = 40
+
+# Bayer matrix for dithering
+BAYER_4x4 = np.array([
+    [ 0,  8,  2, 10],
+    [12,  4, 14,  6],
+    [ 3, 11,  1,  9],
+    [15,  7, 13,  5]
+], dtype=float) / 16.0 - 0.5
+
+
+EDGE_STRENGTH = 0.60
+DITHER_STRENGTH = 25.0
+
+# Preprocess -> Edge mapping -> Compress -> Dither -> Recolour
+preprocessed_img = preprocess_img(img, saturation=1.2, shadow_contrast=1.2)
+img_cv2_grayscale: np.ndarray = cv2.cvtColor(np.array(preprocessed_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
+sobel_matrix = sobel_mapping(img_cv2_grayscale)
+edge_img = edge_mapping(preprocessed_img, sobel_matrix)
+compressed_img = compress_img(edge_img, target_pixels=58_000, sobel_matrix=sobel_matrix)
+dithered_img = dither_bayer(compressed_img, strength=DITHER_STRENGTH, matrix=BAYER_4x4)
+final_img = recolour_img(dithered_img)
+
+
+final_img.save("output_final.png")
+
+end_time = time.perf_counter()
+
+print(f"Total time taken: {end_time - start_time:.4f} seconds")
 
