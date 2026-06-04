@@ -1,7 +1,6 @@
-from PIL import Image, ImageTk, ImageEnhance, ImageFilter
-import numpy as np # better data handling and L2 norm calculation
+from PIL import Image, ImageEnhance
+import numpy as np
 import cv2
-import tkinter as tk
 from skimage import color as skcolor
 import time
 
