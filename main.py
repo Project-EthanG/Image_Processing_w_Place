@@ -181,35 +181,40 @@ def compress_img(
     ) -> Image.Image:
 
     w, h = inputted_img.size
+    aspect = w / h
 
-    # In case image is way too small
-    block_size = max(1, int(np.sqrt((w * h) / target_pixels)))
+    # Solve for new_h such that new_w * new_h ≈ target_pixels, keeping aspect ratio
+    # new_w = aspect * new_h  →  aspect * new_h^2 = target_pixels
+    new_h = max(1, int(np.sqrt(target_pixels / aspect)))
+    new_w = max(1, int(aspect * new_h))
+
+    block_size_h = max(1, h // new_h)
+    block_size_w = max(1, w // new_w)
+
     pixels = np.array(inputted_img.convert("RGB")).astype(float)
-    new_h = h // block_size
-    new_w = w // block_size
 
-    # Duplicate pixel and sobel matrices but with their smaller size
-    pixels_cropped = pixels[:new_h * block_size, :new_w * block_size]
-    sobel_cropped  = sobel_matrix[:new_h * block_size, :new_w * block_size].astype(float)
+    # Crop to exact multiples before reshaping
+    crop_h = new_h * block_size_h
+    crop_w = new_w * block_size_w
+    pixels_cropped = pixels[:crop_h, :crop_w]
+    sobel_cropped  = sobel_matrix[:crop_h, :crop_w].astype(float)
 
-    # Reshape and take the average for pixel and sobel blocks
-    blocks = pixels_cropped.reshape(new_h, block_size, new_w, block_size, 3)
-    block_mean = blocks.mean(axis=(1, 3))
-    sobel_blocks = sobel_cropped.reshape(new_h, block_size, new_w, block_size)
-    edge_strength = sobel_blocks.mean(axis=(1, 3)) / 255.0
+    # Reshape into blocks and average
+    blocks     = pixels_cropped.reshape(new_h, block_size_h, new_w, block_size_w, 3)
+    block_mean = blocks.mean(axis=(1, 3))  # shape (new_h, new_w, 3)
 
-    # Extract centre pixel of each block
-    mid = block_size // 2
-    centre = pixels_cropped[mid::block_size, mid::block_size]
+    sobel_blocks  = sobel_cropped.reshape(new_h, block_size_h, new_w, block_size_w)
+    edge_strength = sobel_blocks.mean(axis=(1, 3)) / 255.0  # shape (new_h, new_w)
+
+    mid_h = block_size_h // 2
+    mid_w = block_size_w // 2
+    centre = pixels_cropped[mid_h::block_size_h, mid_w::block_size_w]
     centre = centre[:new_h, :new_w]
 
-    # Broadcast the edge strength over the RGB channels
-    e = edge_strength[:, :, None]
+    e      = edge_strength[:, :, None]
     output = e * block_mean + (1 - e) * (centre * flat_preserve + block_mean * (1 - flat_preserve))
 
-    compressed = Image.fromarray(output.astype(np.uint8), "RGB")
-    return compressed.resize((new_w * block_size, new_h * block_size), Image.NEAREST)
-
+    return Image.fromarray(output.astype(np.uint8), "RGB")
 
 def dither_bayer(
         inputted_img: Image.Image,
@@ -270,10 +275,11 @@ preprocessed_img = preprocess_img(img, saturation=1.2, shadow_contrast=1.2)
 img_cv2_grayscale: np.ndarray = cv2.cvtColor(np.array(preprocessed_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
 sobel_matrix = sobel_mapping(img_cv2_grayscale)
 edge_img = edge_mapping(preprocessed_img, sobel_matrix)
-compressed_img = compress_img(edge_img, target_pixels=58_000, sobel_matrix=sobel_matrix)
-dithered_img = dither_bayer(compressed_img, strength=DITHER_STRENGTH, matrix=BAYER_4x4)
-final_img = recolour_img(dithered_img)
+dithered_img = dither_bayer(edge_img, strength=DITHER_STRENGTH, matrix=BAYER_4x4)
+compressed_img = compress_img(dithered_img, target_pixels=50_000, sobel_matrix=sobel_matrix)
+final_img = recolour_img(compressed_img)
 
+print(np.array(final_img).shape)
 
 final_img.save("output_final.png")
 
