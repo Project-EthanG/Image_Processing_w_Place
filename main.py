@@ -270,7 +270,7 @@ BAYER_4x4 = np.array([
 EDGE_STRENGTH = 0.60
 DITHER_STRENGTH = 25.0
 
-# Preprocess -> Edge mapping -> Compress -> Dither -> Recolour
+# Preprocess -> Edge mapping -> Dither -> Compress -> Recolour
 preprocessed_img = preprocess_img(img, saturation=1.2, shadow_contrast=1.2)
 img_cv2_grayscale: np.ndarray = cv2.cvtColor(np.array(preprocessed_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
 sobel_matrix = sobel_mapping(img_cv2_grayscale)
