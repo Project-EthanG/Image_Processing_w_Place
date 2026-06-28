@@ -254,7 +254,7 @@ def dither_bayer(
 start_time = time.perf_counter()
 
 # Open image file
-img: Image.Image = Image.open("makima1.png")
+img: Image.Image = Image.open("alicia_painting.png")
 
 THRESHOLD = 40
 
@@ -276,7 +276,7 @@ img_cv2_grayscale: np.ndarray = cv2.cvtColor(np.array(preprocessed_img.convert("
 sobel_matrix = sobel_mapping(img_cv2_grayscale)
 edge_img = edge_mapping(preprocessed_img, sobel_matrix)
 dithered_img = dither_bayer(edge_img, strength=DITHER_STRENGTH, matrix=BAYER_4x4)
-compressed_img = compress_img(dithered_img, target_pixels=50_000, sobel_matrix=sobel_matrix)
+compressed_img = compress_img(dithered_img, target_pixels=100_000, sobel_matrix=sobel_matrix)
 final_img = recolour_img(compressed_img)
 
 print(np.array(final_img).shape)
