@@ -256,7 +256,7 @@ start_time = time.perf_counter()
 # Open image file
 img: Image.Image = Image.open("alicia_painting.png")
 
-THRESHOLD = 40
+THRESHOLD: int = 40
 
 # Bayer matrix for dithering
 BAYER_4x4 = np.array([
